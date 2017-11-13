@@ -7,7 +7,7 @@ from matplotlib import pyplot
 from keras.models import Model
 from keras.utils import to_categorical
 from keras.layers import Conv2D, Dense, MaxPool2D, Input, Flatten
-from keras.callbacks import ModelCheckpoint
+from keras.callbacks import ModelCheckpoint, EarlyStopping
 
 
 def loadData():
@@ -44,18 +44,24 @@ def constructModel():
     pool_2 = MaxPool2D(pool_size=(2, 2))(conv_3)
 
     # 12*12*128
-    # conv_4 = Conv2D(filters=256, kernel_size=(3, 3), padding='same', activation='relu')(pool_2)
-    # pool_3 = MaxPool2D(pool_size=(2, 2))(conv_4)
+    conv_4 = Conv2D(filters=256, kernel_size=(3, 3), padding='same', activation='relu')(pool_2)
+    pool_3 = MaxPool2D(pool_size=(2, 2))(conv_4)
+
+    # 6*6*256
+    conv_5 = Conv2D(filters=512, kernel_size=(3, 3), padding='same', activation='relu')(pool_3)
+    pool_4 = MaxPool2D(pool_size=(2, 2))(conv_5)
+
+    # 3*3*512
+    conv_6 = Conv2D(filters=1024, kernel_size=(3, 3), padding='same', activation='relu')(pool_4)
+    pool_5 = MaxPool2D(pool_size=(3, 3))(conv_6)
 
     # flatten
-    flat = Flatten()(pool_2)
+    flat = Flatten()(pool_5)
 
     # 1*256
     dense_1 = Dense(7, activation='softmax')(flat)
 
     model = Model(inputs=image, outputs=dense_1)
-
-
     return model
 
 def plotHistory(history):
@@ -105,7 +111,10 @@ if __name__ == "__main__":
 
     filepath="weights.best.hdf5"
     checkpoint = ModelCheckpoint(filepath, monitor='val_acc', verbose=1, save_best_only=True, mode='max')
-    callbacks_list = [checkpoint]
+
+    early_stop = EarlyStopping(monitor='val_acc', patience=5, mode='auto')
+
+    callbacks_list = [checkpoint, early_stop]
 
     history = model.fit(x, y, validation_data=(x_test, y_test), epochs=100, callbacks=callbacks_list)
     plotHistory(history)
