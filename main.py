@@ -1,3 +1,4 @@
+import cv2
 import pandas
 import numpy
 
@@ -6,6 +7,7 @@ from matplotlib import pyplot
 from keras.models import Model
 from keras.utils import to_categorical
 from keras.layers import Conv2D, Dense, MaxPool2D, Input, Flatten
+from keras.callbacks import ModelCheckpoint
 
 
 def loadData():
@@ -53,7 +55,6 @@ def constructModel():
 
     model = Model(inputs=image, outputs=dense_1)
 
-    model.compile(loss='categorical_crossentropy', optimizer='SGD', metrics=['accuracy'])
 
     return model
 
@@ -80,7 +81,9 @@ def dataFormatting(data):
     temp_y = []
 
     for index, row in data.iterrows():
-        temp_x.append(row[u'image'])
+        temp_img = numpy.empty_like(row[u'image'], dtype=numpy.float32)
+        cv2.normalize(row[u'image'], temp_img, alpha=0.0, beta=1.0, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+        temp_x.append(temp_img)
         temp_y.append(row[u'emotion'])
 
     x = numpy.array(temp_x)
@@ -95,8 +98,15 @@ if __name__ == "__main__":
     x_test, y_test = dataFormatting(public_test)
 
     model = constructModel()
-    print "fitting..."
-    history = model.fit(x, y, validation_data=(x_test, y_test), epochs=50)
+    model.compile(loss='categorical_crossentropy', optimizer='SGD', metrics=['accuracy'])
 
+    print "fitting..."
+    # checkpoint
+
+    filepath="weights.best.hdf5"
+    checkpoint = ModelCheckpoint(filepath, monitor='val_acc', verbose=1, save_best_only=True, mode='max')
+    callbacks_list = [checkpoint]
+
+    history = model.fit(x, y, validation_data=(x_test, y_test), epochs=100, callbacks=callbacks_list)
     plotHistory(history)
 
