@@ -1,14 +1,25 @@
 import cv2
 import pandas
 import numpy
+import pickle
 
 from matplotlib import pyplot
 
-from keras.models import Model
-from keras.utils import to_categorical
-from keras.layers import Conv2D, Dense, MaxPool2D, Input, Flatten
-from keras.callbacks import ModelCheckpoint, EarlyStopping
+from time import gmtime, strftime
 
+from sklearn.metrics import confusion_matrix, accuracy_score
+
+from keras.models import Model, Sequential
+from keras.utils import to_categorical
+from keras.optimizers import Adam
+from keras.layers import Conv2D, Dense, MaxPool2D, Input, Flatten, Dropout, BatchNormalization
+from keras.callbacks import ModelCheckpoint, EarlyStopping, CSVLogger
+
+from keras.preprocessing.image import ImageDataGenerator
+
+
+EPOCHS = 50
+BATCH_SIZE = 256
 
 def loadData():
     print "loading data..."
@@ -32,40 +43,56 @@ def loadData():
 
 def constructModel():
     print "constructing model..."
-    image = Input(shape=(48, 48, 1))
+    model = Sequential()
+    input_shape = (48, 48, 1)
 
     # 48*48*1
-    conv_1 = Conv2D(filters=64, kernel_size=(3, 3), padding='same', activation='relu')(image)
-    conv_2 = Conv2D(filters=64, kernel_size=(3, 3), padding='same', activation='relu')(conv_1)
-    pool_1 = MaxPool2D(pool_size=(2, 2))(conv_2)
+    model.add(Conv2D(filters=64, kernel_size=(3, 3), padding='same', activation='relu', input_shape=input_shape))
+    model.add(BatchNormalization())
+    model.add(Conv2D(filters=64, kernel_size=(3, 3), padding='same', activation='relu', input_shape=input_shape))
+    model.add(BatchNormalization())
+    model.add(MaxPool2D(pool_size=(2, 2)))
 
     # 24*24*64
-    conv_3 = Conv2D(filters=256, kernel_size=(3, 3), padding='same', activation='relu')(pool_1)
-    pool_2 = MaxPool2D(pool_size=(2, 2))(conv_3)
+    model.add(Conv2D(filters=128, kernel_size=(3, 3), padding='same', activation='relu'))
+    model.add(BatchNormalization())
+    model.add(Conv2D(filters=128, kernel_size=(3, 3), padding='same', activation='relu'))
+    model.add(BatchNormalization())
+    model.add(MaxPool2D(pool_size=(2, 2)))
 
     # 12*12*128
-    conv_4 = Conv2D(filters=256, kernel_size=(3, 3), padding='same', activation='relu')(pool_2)
-    pool_3 = MaxPool2D(pool_size=(2, 2))(conv_4)
+    model.add(Conv2D(filters=256, kernel_size=(3, 3), padding='same', activation='relu'))
+    model.add(BatchNormalization())
+    model.add(Conv2D(filters=256, kernel_size=(3, 3), padding='same', activation='relu'))
+    model.add(BatchNormalization())
+    model.add(MaxPool2D(pool_size=(2, 2)))
 
     # 6*6*256
-    conv_5 = Conv2D(filters=512, kernel_size=(3, 3), padding='same', activation='relu')(pool_3)
-    pool_4 = MaxPool2D(pool_size=(2, 2))(conv_5)
+    model.add(Conv2D(filters=512, kernel_size=(3, 3), padding='same', activation='relu'))
+    model.add(BatchNormalization())
+    model.add(Conv2D(filters=512, kernel_size=(3, 3), padding='same', activation='relu'))
+    model.add(BatchNormalization())
+    model.add(MaxPool2D(pool_size=(2, 2)))
 
     # 3*3*512
-    conv_6 = Conv2D(filters=1024, kernel_size=(3, 3), padding='same', activation='relu')(pool_4)
-    pool_5 = MaxPool2D(pool_size=(3, 3))(conv_6)
+    model.add(Conv2D(filters=1024, kernel_size=(3, 3), padding='same', activation='relu'))
+    model.add(BatchNormalization())
+    model.add(MaxPool2D(pool_size=(3, 3)))
 
-    # flatten
-    flat = Flatten()(pool_5)
+    # flatten: 6*6*256
+    model.add(Flatten())
 
-    # 1*256
-    dense_1 = Dense(7, activation='softmax')(flat)
+    # 1*(6*6*256)
+    model.add(Dense(1014, activation='relu'))
 
-    model = Model(inputs=image, outputs=dense_1)
+    # 1*1024
+    model.add(Dense(7, activation='softmax'))
+
     return model
 
-def plotHistory(history):
-    pyplot.figure()
+def plotHistory(timestamp, history):
+    fig = pyplot.figure(figsize=(8, 8))
+    pyplot.subplot(211)
     pyplot.plot(history.history["loss"])
     pyplot.plot(history.history["val_loss"])
     pyplot.title("Training & testing loss curve")
@@ -73,13 +100,15 @@ def plotHistory(history):
     pyplot.ylabel("loss")
     pyplot.legend(["train", "test"], loc='upper right')
 
-    pyplot.figure()
-    pyplot.plot(history.history["coeff_determination"])
-    pyplot.plot(history.history["val_coeff_determination"])
-    pyplot.title("Training & testing R2 score curve")
+    pyplot.subplot(212)
+    pyplot.plot(history.history["acc"])
+    pyplot.plot(history.history["val_acc"])
+    pyplot.title("Training & testing acc curve")
     pyplot.xlabel("epoch")
-    pyplot.ylabel("R2 score")
+    pyplot.ylabel("acc")
     pyplot.legend(["train", "test"], loc='upper left')
+
+    fig.savefig(timestamp+".png" )
 
 def dataFormatting(data):
     print "formatting..."
@@ -103,19 +132,44 @@ if __name__ == "__main__":
     x, y = dataFormatting(training)
     x_test, y_test = dataFormatting(public_test)
 
+    total_num = len(x)
+    batch_size= 64
+
     model = constructModel()
     model.compile(loss='categorical_crossentropy', optimizer='SGD', metrics=['accuracy'])
 
     print "fitting..."
     # checkpoint
 
-    filepath="weights.best.hdf5"
-    checkpoint = ModelCheckpoint(filepath, monitor='val_acc', verbose=1, save_best_only=True, mode='max')
+    timestamp = strftime("%Y-%m-%d-%H%M%S", gmtime())
 
-    early_stop = EarlyStopping(monitor='val_acc', patience=5, mode='auto')
+    filepath="log/%s.weights.{epoch:02d}-{val_acc:.2f}.hdf5"%timestamp
 
-    callbacks_list = [checkpoint, early_stop]
+    checkpoint = ModelCheckpoint(filepath, monitor='val_acc')
+    early_stop = EarlyStopping(monitor='val_acc', patience=5, mode='max')
+    logger = CSVLogger("log/%s.logger.csv"%timestamp, separator=',', append=False)
 
-    history = model.fit(x, y, validation_data=(x_test, y_test), epochs=100, callbacks=callbacks_list)
-    plotHistory(history)
+    callbacks_list = [checkpoint, early_stop, logger]
+
+    datagen = ImageDataGenerator(horizontal_flip=True)
+    x_y = datagen.flow(x, y, batch_size=batch_size)
+
+    # history = model.fit_generator(x_y, steps_per_epoch=2*total_num/batch_size, epochs=100, callbacks=callbacks_list, validation_data=(x_test, y_test))
+
+    history = model.fit(x, y, validation_data=(x_test, y_test), epochs=EPOCHS, batch_size=BATCH_SIZE, callbacks=callbacks_list)
+    # plotHistory(timestamp, history)
+
+    test_pred = model.predict(x_test)
+
+    true_label = numpy.argmax(y_test, axis=1)
+    pred_label = numpy.argmax(test_pred, axis=1)
+
+    print accuracy_score(true_label, pred_label)
+    print confusion_matrix(true_label, pred_label)
+
+
+
+
+
+
 
