@@ -4,19 +4,22 @@ import pandas
 import numpy
 import pickle
 
+from matplotlib import pyplot
+from collections import Counter
+
 from keras.optimizers import Adam
 from keras.models import Model, Sequential
 from keras.utils import to_categorical, plot_model
 
 from keras.layers import Conv2D, Dense, MaxPool2D, Input, \
-    Flatten, Dropout, BatchNormalization, Activation
+    Flatten, Dropout, BatchNormalization, Activation, LSTM, Reshape
 
 from keras.callbacks import ModelCheckpoint, EarlyStopping, CSVLogger
 
 from keras.preprocessing.image import ImageDataGenerator
 
 EPOCHS = 50
-BATCH_SIZE = 256
+BATCH_SIZE = 512
 TRAINING_TESTING_RATIO = 0.7
 
 PATIENCE_EPOCHS = 10
@@ -121,48 +124,28 @@ def constructModel():
     input_shape = (48, 48, 1)
 
     # 48*48*1
-    model.add(Conv2D(filters=16, kernel_size=(3, 3), padding='same', input_shape=input_shape))
-    model.add(BatchNormalization())
+    model.add(Conv2D(filters=32, kernel_size=(3, 3), padding='same', input_shape=input_shape))
     model.add(Activation('relu'))
-
-    model.add(Conv2D(filters=16, kernel_size=(3, 3), padding='same'))
-    model.add(BatchNormalization())
+    model.add(Conv2D(filters=32, kernel_size=(3, 3), padding='same'))
     model.add(Activation('relu'))
+    model.add(BatchNormalization())
 
     model.add(MaxPool2D(pool_size=(2, 2)))
 
-    # 24*24*64
-    model.add(Conv2D(filters=32, kernel_size=(3, 3), padding='same'))
-    model.add(BatchNormalization())
-    model.add(Activation('relu'))
-
-    model.add(Conv2D(filters=32, kernel_size=(3, 3), padding='same'))
-    model.add(BatchNormalization())
-    model.add(Activation('relu'))
-
-    model.add(MaxPool2D(pool_size=(2, 2)))
-
-    # 12*12*128
+    # 24*24*16
     model.add(Conv2D(filters=64, kernel_size=(3, 3), padding='same'))
-    model.add(BatchNormalization())
     model.add(Activation('relu'))
-
     model.add(Conv2D(filters=64, kernel_size=(3, 3), padding='same'))
     model.add(BatchNormalization())
     model.add(Activation('relu'))
 
     model.add(MaxPool2D(pool_size=(2, 2)))
 
-    # flatten: 6*6*256
+    # flatten: 12*12*32
     model.add(Flatten())
 
-    # 1*(6*6*256)
-    model.add(Dense(1024))
-    model.add(BatchNormalization())
-    model.add(Activation('relu'))
-
-    # 1*512
-    model.add(Dense(256))
+    # 1*256
+    model.add(Dense(128))
     model.add(BatchNormalization())
     model.add(Activation('relu'))
 
@@ -182,6 +165,8 @@ def dataFormatting(data):
         temp_x.append(temp_img)
         temp_y.append(row[u'emotion'])
 
+    # plotDistrib(temp_y)
+
     x = numpy.array(temp_x)
     y = to_categorical(numpy.array(temp_y), 7)
 
@@ -197,6 +182,40 @@ def randomSplit(x, y):
     select_bool = permu <= (ratio*data_size)
 
     return x[select_bool], y[select_bool], x[~select_bool], y[~select_bool]
+
+def sampling(x, y):
+    index_array = numpy.arange(len(x))
+    prob = y/numpy.sum(y)
+    while 1:
+        selected_index = numpy.random.choice(index_array, BATCH_SIZE, p=prob)
+        yield (x[selected_index], y[selected_index])
+
+def plotDistrib(labels, info=""):
+    freq = Counter(labels)
+    keys = numpy.round(freq.keys(), decimals=2)
+    vals = numpy.array(freq.values())
+    sort_index = numpy.argsort(keys)
+    keys_sorted = keys[sort_index]
+    vals_sorted = vals[sort_index]
+    cmap = pyplot.cm.Reds
+    color = cmap(numpy.linspace(0.1, 1., len(keys_sorted)))
+
+    _, (fig1, fig2) = pyplot.subplots(1, 2)
+
+    fig1.bar(keys_sorted, vals_sorted, width=0.2, color=color)
+    text_str = ["Angry", "Disgust", "Fear", "Happy", "Sad", "Surprise", "Neutral"]
+    for i in range(len(keys_sorted)):
+        fig1.text(keys_sorted[i], vals_sorted[i] + 10, "%s: %d"%(text_str[i], vals_sorted[i]))
+    fig1.set_title(info + " (%d in total)"%(len(labels)))
+    fig1.set_xlabel("Labels")
+    fig1.set_xticks(keys_sorted)
+    fig1.set_ylabel("Frequency")
+
+    fig2.pie(vals_sorted, labels=text_str, autopct='%1.2f%%', colors=color)
+    fig2.axis('equal')
+    fig2.set_title(info + " (%d in total)"%(len(labels)))
+    pyplot.draw()
+    pyplot.show()
 
 if __name__ == "__main__":
     training, public_test, private_test = loadData()
@@ -237,7 +256,11 @@ if __name__ == "__main__":
                        y=y,
                        batch_size=BATCH_SIZE)
 
-    # history = model.fit_generator(x_y, steps_per_epoch=2*total_num/batch_size, epochs=100, callbacks=callbacks_list, validation_data=(x_test, y_test))
+    history = model.fit_generator(x_y,
+                                  steps_per_epoch=2*total_num/batch_size,
+                                  epochs=100,
+                                  callbacks=callbacks_list,
+                                  validation_data=(x_test, y_test))
 
     history = model.fit(x=x,
                         y=y,
